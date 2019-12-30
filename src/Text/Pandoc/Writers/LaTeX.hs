@@ -118,6 +118,34 @@ writeBeamer options document =
   evalStateT (pandocToLaTeX options document) $
     (startingState options){ stBeamer = True }
 
+allImages :: [Inline] -> Bool
+allImages (Image _ _ _ : t) = allImages t
+allImages (SoftBreak : t) = allImages t
+allImages (_ : _) = False
+allImages _ = True
+
+toSubFigure :: PandocMonad m
+                  => Inline -> LW m (Doc Text)
+toSubFigure (Image attr@(ident, _, _) txt (src,tgt)) 
+--  | Just tit <- T.stripPrefix "fig:" tgt
+  = do
+      (capt, captForLof, footnotes) <- getCaption True txt
+      lab <- labelFor ident
+      let caption = "\\caption" <> captForLof <> braces capt <> lab
+      img <- inlineToLaTeX (Image attr txt (src,tgt))
+      innards <- hypertarget True ident $
+                   "\\centering" $$ img $$ caption <> cr
+      let figure = cr <> "\\begin{figure}" $$ innards $$ "\\end{figure}"
+      st <- get
+      return $ (if stInMinipage st
+                 -- can't have figures in notes or minipage (here, table cell)
+                 -- http://www.tex.ac.uk/FAQ-ouparmd.html
+                then cr <> "\\begin{center}" $$ img $+$ capt $$
+                       "\\end{center}"
+                else figure) $$ footnotes
+toSubFigure _ = do
+  error "IMG Only!!!"
+
 type LW m = StateT WriterState m
 
 pandocToLaTeX :: PandocMonad m
@@ -446,6 +474,10 @@ toLabel z = go `fmap` stringToLaTeX URLString z
 inCmd :: Text -> Doc Text -> Doc Text
 inCmd cmd contents = char '\\' <> literal cmd <> braces contents
 
+isImage :: Inline -> Bool
+isImage (Image _ _ _) = True
+isImage _ = False
+
 toSlides :: PandocMonad m => [Block] -> LW m [Block]
 toSlides bs = do
   opts <- gets stOptions
@@ -580,7 +612,12 @@ blockToLaTeX (Para [Str ".",Space,Str ".",Space,Str "."]) = do
      then blockToLaTeX (RawBlock "latex" "\\pause")
      else inlineListToLaTeX [Str ".",Space,Str ".",Space,Str "."]
 blockToLaTeX (Para lst) =
-  inlineListToLaTeX lst
+  if allImages lst
+    then do
+      let imgs = filter isImage lst
+      figs <- mapM toSubFigure imgs
+      return (foldl (<>) empty figs)
+    else inlineListToLaTeX lst
 blockToLaTeX (LineBlock lns) =
   blockToLaTeX $ linesToPara lns
 blockToLaTeX (BlockQuote lst) = do
@@ -678,9 +715,7 @@ blockToLaTeX (BulletList lst) = do
   beamer <- gets stBeamer
   let inc = if beamer && incremental then "[<+->]" else ""
   items <- mapM listItemToLaTeX lst
-  let spacing = if isTightList lst
-                   then text "\\tightlist"
-                   else empty
+  let spacing = empty
   return $ text ("\\begin{itemize}" <> inc) $$ spacing $$ vcat items $$
              "\\end{itemize}"
 blockToLaTeX (OrderedList _ []) = return empty -- otherwise latex error
@@ -724,9 +759,7 @@ blockToLaTeX (OrderedList (start, numstyle, numdelim) lst) = do
                         then empty
                         else "\\setcounter" <> braces enum <>
                               braces (text $ show $ start - 1)
-  let spacing = if isTightList lst
-                   then text "\\tightlist"
-                   else empty
+  let spacing = empty
   return $ text ("\\begin{enumerate}" <> inc)
          $$ stylecommand
          $$ resetcounter
@@ -739,9 +772,7 @@ blockToLaTeX (DefinitionList lst) = do
   beamer <- gets stBeamer
   let inc = if beamer && incremental then "[<+->]" else ""
   items <- mapM defListItemToLaTeX lst
-  let spacing = if all isTightList (map snd lst)
-                   then text "\\tightlist"
-                   else empty
+  let spacing = empty
   return $ text ("\\begin{description}" <> inc) $$ spacing $$ vcat items $$
                "\\end{description}"
 blockToLaTeX HorizontalRule =
@@ -1300,9 +1331,9 @@ inlineToLaTeX (Image attr _ (source, _)) = do
                          Nothing          ->
                            case dir of
                                 Width | isJust (dimension Height attr) ->
-                                  [d <> "\\textwidth"]
+                                  []
                                 Height | isJust (dimension Width attr) ->
-                                  [d <> "\\textheight"]
+                                  []
                                 _ -> []
       dimList = showDim Width <> showDim Height
       dims = if null dimList
