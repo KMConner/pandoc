@@ -61,10 +61,11 @@ import qualified Data.Attoparsec.ByteString.Char8 as A
 -- algorithms borrowed from wwwis.pl
 
 data ImageType = Png | Gif | Jpeg | Svg | Pdf | Eps | Emf deriving Show
-data Direction = Width | Height
+data Direction = Width | Height | FrameWidth
 instance Show Direction where
   show Width  = "width"
   show Height = "height"
+  show FrameWidth = "frameWidth"
 
 data Dimension = Pixel Integer
                | Centimeter Double
@@ -234,6 +235,7 @@ dimension dir (_, _, kvs) =
   case dir of
     Width  -> extractDim "width"
     Height -> extractDim "height"
+    FrameWidth -> extractDim "frameWidth"
   where
     extractDim key = lookup key kvs >>= lengthToDim
 

@@ -124,6 +124,11 @@ allImages (SoftBreak : t) = allImages t
 allImages (_ : _) = False
 allImages _ = True
 
+addAttr :: Attr -> Text -> Text -> Attr
+addAttr attr@(a, b, c) k v = case lookup k c of
+  Just _ -> attr
+  Nothing -> (a, b, (k, v) : c)
+
 toSubFigure :: PandocMonad m
                   => Inline -> LW m (Doc Text)
 toSubFigure (Image attr@(ident, _, _) txt (src,tgt))
@@ -131,11 +136,12 @@ toSubFigure (Image attr@(ident, _, _) txt (src,tgt))
   = do
       (capt, captForLof, footnotes) <- getCaption True txt
       lab <- labelFor ident
+      wid <- getSizeValue attr FrameWidth
       let caption = "\\caption" <> captForLof <> braces capt <> lab
-      img <- inlineToLaTeX (Image attr txt (src,tgt))
-      innards <- hypertarget True ident $
-                   "\\centering" $$ img $$ caption <> cr
-      let figure = cr <> "\\begin{figure}" $$ innards $$ "\\end{figure}"
+      img <- inlineToLaTeX (Image (addAttr attr "width" "100%") txt (src,tgt))
+      innards <- hypertarget True ident $ img $$ caption <> cr
+      let widText = if null wid then "\\textwidth" else wid
+      let figure = cr <> "\\begin{subfigure}{" $$ widText $$ "}" $$ innards $$ "\\end{subfigure}"
       st <- get
       return $ (if stInMinipage st
                  -- can't have figures in notes or minipage (here, table cell)
@@ -615,7 +621,7 @@ blockToLaTeX (Para lst) =
     then do
       let imgs = filter isImage lst
       figs <- mapM toSubFigure imgs
-      return (foldl (<>) empty figs)
+      return $ "\\begin{figure*}" $$ foldl (<>) empty figs $$ "\\end{figure*}"
     else inlineListToLaTeX lst
 blockToLaTeX (LineBlock lns) =
   blockToLaTeX $ linesToPara lns
@@ -1137,6 +1143,35 @@ isQuoted :: Inline -> Bool
 isQuoted (Quoted _ _) = True
 isQuoted _            = False
 
+getSizeValue :: PandocMonad m => Attr -> Direction -> LW m (Doc Text)
+getSizeValue attr dir = do
+  opts <- gets stOptions
+  return (case dimension dir attr of
+    Just (Pixel a)   ->
+      literal (showInInch opts (Pixel a)) <> "in"
+    Just (Percent a) ->
+      literal (showFl (a / 100)) <>
+        case dir of
+          Width  -> "\\textwidth"
+          Height -> "\\textheight"
+          FrameWidth -> "\\textwidth"
+    Just dim         -> text (show dim)
+    Nothing          -> empty)
+
+getSizeTextPair :: PandocMonad m => Attr -> Direction -> LW m [Doc Text]
+getSizeTextPair attr dir = do
+  value <- getSizeValue attr dir
+  return (let d = text (show dir) <> "="
+                      in case dimension dir attr of
+                        Just _ -> [d <> value]
+                        Nothing          -> [])
+
+getSizeText :: PandocMonad m => Attr -> LW m [Doc Text]
+getSizeText attr = do
+  w <- getSizeTextPair attr Width
+  h <- getSizeTextPair attr Height
+  return $ w <> h
+
 -- | Convert inline element to LaTeX
 inlineToLaTeX :: PandocMonad m
               => Inline    -- ^ Inline to convert
@@ -1314,33 +1349,13 @@ inlineToLaTeX il@(Image _ _ (src, _))
 inlineToLaTeX (Image attr _ (source, _)) = do
   setEmptyLine False
   modify $ \s -> s{ stGraphics = True }
-  opts <- gets stOptions
-  let showDim dir = let d = text (show dir) <> "="
-                    in case dimension dir attr of
-                         Just (Pixel a)   ->
-                           [d <> literal (showInInch opts (Pixel a)) <> "in"]
-                         Just (Percent a) ->
-                           [d <> literal (showFl (a / 100)) <>
-                             case dir of
-                                Width  -> "\\textwidth"
-                                Height -> "\\textheight"
-                           ]
-                         Just dim         ->
-                           [d <> text (show dim)]
-                         Nothing          ->
-                           case dir of
-                                Width | isJust (dimension Height attr) ->
-                                  []
-                                Height | isJust (dimension Width attr) ->
-                                  []
-                                _ -> []
-      dimList = showDim Width <> showDim Height
-      dims = if null dimList
-                then empty
-                else brackets $ mconcat (intersperse "," dimList)
-      source' = if isURI source
-                   then source
-                   else T.pack $ unEscapeString $ T.unpack source
+  dimList <- getSizeText attr
+  let dims = if null dimList
+            then empty
+            else brackets $ mconcat (intersperse "," dimList)
+  let source' = if isURI source
+                then source
+                else T.pack $ unEscapeString $ T.unpack source
   source'' <- stringToLaTeX URLString source'
   inHeading <- gets stInHeading
   return $
