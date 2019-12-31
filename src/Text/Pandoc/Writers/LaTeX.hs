@@ -53,7 +53,7 @@ data WriterState =
               , stInQuote       :: Bool          -- true if in a blockquote
               , stExternalNotes :: Bool          -- true if in context where
                                                  -- we need to store footnotes
-              , stInMinipage    :: Bool          -- true if in minipage 
+              , stInMinipage    :: Bool          -- true if in minipage
               , stInHeading     :: Bool          -- true if in a section heading
               , stInItem        :: Bool          -- true if in \item[..]
               , stNotes         :: [Doc Text]    -- notes in a minipage
@@ -119,14 +119,14 @@ writeBeamer options document =
     (startingState options){ stBeamer = True }
 
 allImages :: [Inline] -> Bool
-allImages (Image _ _ _ : t) = allImages t
+allImages (Image {} : t) = allImages t
 allImages (SoftBreak : t) = allImages t
 allImages (_ : _) = False
 allImages _ = True
 
 toSubFigure :: PandocMonad m
                   => Inline -> LW m (Doc Text)
-toSubFigure (Image attr@(ident, _, _) txt (src,tgt)) 
+toSubFigure (Image attr@(ident, _, _) txt (src,tgt))
 --  | Just tit <- T.stripPrefix "fig:" tgt
   = do
       (capt, captForLof, footnotes) <- getCaption True txt
@@ -143,8 +143,7 @@ toSubFigure (Image attr@(ident, _, _) txt (src,tgt))
                 then cr <> "\\begin{center}" $$ img $+$ capt $$
                        "\\end{center}"
                 else figure) $$ footnotes
-toSubFigure _ = do
-  error "IMG Only!!!"
+toSubFigure _ = error "IMG Only!!!"
 
 type LW m = StateT WriterState m
 
@@ -475,7 +474,7 @@ inCmd :: Text -> Doc Text -> Doc Text
 inCmd cmd contents = char '\\' <> literal cmd <> braces contents
 
 isImage :: Inline -> Bool
-isImage (Image _ _ _) = True
+isImage Image {} = True
 isImage _ = False
 
 toSlides :: PandocMonad m => [Block] -> LW m [Block]
