@@ -791,14 +791,14 @@ blockToLaTeX (Header level (id',classes,_) lst) = do
 blockToLaTeX (Table caption aligns widths heads rows) = do
   (captionText, captForLof, captNotes) <- getCaption False caption
   let toHeaders hs = do contents <- tableRowToLaTeX True aligns widths hs
-                        return ("\\toprule" $$ contents $$ "\\midrule")
+                        return ("\\hline" $$ contents $$ "\\hline")
   let removeNote (Note _) = Span ("", [], []) []
       removeNote x        = x
   firsthead <- if isEmpty captionText || all null heads
                   then return empty
-                  else ($$ text "\\endfirsthead") <$> toHeaders heads
+                  else ($$ text "") <$> toHeaders heads
   head' <- if all null heads
-              then return "\\toprule"
+              then return "\\hline"
               -- avoid duplicate notes in head and firsthead:
               else toHeaders (if isEmpty firsthead
                                  then heads
@@ -806,21 +806,18 @@ blockToLaTeX (Table caption aligns widths heads rows) = do
   let capt = if isEmpty captionText
                 then empty
                 else "\\caption" <> captForLof <> braces captionText
-                         <> "\\tabularnewline"
   rows' <- mapM (tableRowToLaTeX False aligns widths) rows
   let colDescriptors = literal $ T.concat $ map toColDescriptor aligns
   modify $ \s -> s{ stTable = True }
   notes <- notesToLaTeX <$> gets stNotes
-  return $ "\\begin{longtable}[]" <>
-              braces ("@{}" <> colDescriptors <> "@{}")
-              -- the @{} removes extra space at beginning and end
+  return $ "\\begin{table}[]"
          $$ capt
-         $$ firsthead
+         $$ "\\centering"
+         $$ "\\begin{tabular}" <>
+              braces colDescriptors
          $$ head'
-         $$ "\\endhead"
          $$ vcat rows'
-         $$ "\\bottomrule"
-         $$ "\\end{longtable}"
+         $$ "\\end{tabular}\\end{table}"
          $$ captNotes
          $$ notes
 
@@ -875,7 +872,7 @@ tableRowToLaTeX header aligns widths cols = do
                           (scaleFactor / fromIntegral (length aligns))
                    else map (scaleFactor *) widths
   cells <- mapM (tableCellToLaTeX header) $ zip3 widths' aligns cols
-  return $ hsep (intersperse "&" cells) <> "\\tabularnewline"
+  return $ hsep (intersperse "&" cells) <> "\\tabularnewline\\hline"
 
 -- For simple latex tables (without minipages or parboxes),
 -- we need to go to some lengths to get line breaks working:
