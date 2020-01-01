@@ -31,9 +31,10 @@ import Control.Monad.Except (throwError)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BL
 import Data.Char (toLower)
+import qualified Data.Map as M
 import Data.Maybe (fromMaybe, isJust, isNothing)
 import qualified Data.Set as Set
-import Data.Text (Text)
+import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TE
@@ -278,7 +279,8 @@ convertWithOpts opts = do
     setResourcePath (optResourcePath opts)
     mapM_ (uncurry setRequestHeader) (optRequestHeaders opts)
 
-    doc <- sourceToDoc sources >>=
+    let loadSources :: [FilePath] -> PandocIO Pandoc
+        loadSources s = sourceToDoc s >>=
               (   (if isJust (optExtractMedia opts)
                       then fillMediaBag
                       else return)
@@ -288,6 +290,28 @@ convertWithOpts opts = do
               >=> applyFilters readerOpts filters' [T.unpack format]
               >=> maybe return extractMedia (optExtractMedia opts)
               )
+
+    doc' <- loadSources sources
+
+    let (Pandoc meta blocks) = doc'
+    let additionalMeta = ["jabstractFile", "eabstractFile", "acknowledgmentFile"]
+
+    let loadAdditionalFile :: Text -> Meta -> PandocIO Meta
+        loadAdditionalFile t m = case lookupMeta t m of
+          Just (MetaInlines [Str s]) -> do
+            (Pandoc _ blk) <- loadSources [unpack s]
+            return $ Meta (M.insert (t <> "Blocks") (MetaBlocks blk) (unMeta m))
+          Just _ -> error $ unpack "Invalid configuration of " <> unpack t
+          _ -> return m
+    let loadAdditionalFiles :: [Text] -> Meta -> PandocIO Meta
+        loadAdditionalFiles [] m = return m
+        loadAdditionalFiles (h:t) m = do
+          m' <- loadAdditionalFile h m
+          ret <- loadAdditionalFiles t m'
+          return ret
+
+    meta' <- loadAdditionalFiles additionalMeta meta
+    let doc = Pandoc meta' blocks
 
     case writer of
       ByteStringWriter f -> f writerOptions doc >>= writeFnBinary outputFile
