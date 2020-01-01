@@ -153,10 +153,20 @@ toSubFigure _ = error "IMG Only!!!"
 
 type LW m = StateT WriterState m
 
+writeAdditionalMetaBlock :: PandocMonad m
+                         => Text -> Meta -> LW m (Doc Text)
+writeAdditionalMetaBlock metaKey meta =
+  case lookupMeta metaKey meta of
+    Just (MetaBlocks blocks) -> blockListToLaTeX blocks
+    _ -> return empty
+
 pandocToLaTeX :: PandocMonad m
               => WriterOptions -> Pandoc -> LW m Text
 pandocToLaTeX options (Pandoc meta blocks) = do
   -- Strip off final 'references' header if --natbib or --biblatex
+  jabst <- writeAdditionalMetaBlock "jabstractFileBlocks" meta
+  eabst <- writeAdditionalMetaBlock "eabstractFileBlocks" meta
+  acknowledgment <- writeAdditionalMetaBlock "acknowledgmentFileBlocks" meta
   let method = writerCiteMethod options
   let blocks' = if method == Biblatex || method == Natbib
                    then case reverse blocks of
@@ -261,6 +271,15 @@ pandocToLaTeX options (Pandoc meta blocks) = do
                                       (T.stripEnd $ styleToLaTeX sty)
                                 Nothing -> id
                       else id) $
+                  (if isEmpty jabst
+                   then id
+                   else defField "jabst" jabst) $
+                  (if isEmpty eabst
+                   then id
+                   else defField "eabst" eabst) $
+                  (if isEmpty acknowledgment
+                   then id
+                   else defField "acknowledgment" acknowledgment) $
                   (case writerCiteMethod options of
                          Natbib   -> defField "biblio-title" biblioTitle .
                                      defField "natbib" True
