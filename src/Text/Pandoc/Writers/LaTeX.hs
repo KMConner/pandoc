@@ -1510,24 +1510,24 @@ citationsToBiblatex
                 , citationMode = m
                 } = one
        cmd = case m of
-                  SuppressAuthor -> "autocite*"
+                  SuppressAuthor -> "cite*"
                   AuthorInText   -> "textcite"
-                  NormalCitation -> "autocite"
+                  NormalCitation -> "cite"
 
 citationsToBiblatex (c:cs)
   | all (\cit -> null (citationPrefix cit) && null (citationSuffix cit)) (c:cs)
     = do
       let cmd = case citationMode c of
-                    SuppressAuthor -> "\\autocite*"
+                    SuppressAuthor -> "\\cite*"
                     AuthorInText   -> "\\textcite"
-                    NormalCitation -> "\\autocite"
+                    NormalCitation -> "\\cite"
       return $ text cmd <>
                braces (literal (T.intercalate "," (map citationId (c:cs))))
   | otherwise = do
     let cmd = case citationMode c of
-                    SuppressAuthor -> "\\autocites*"
+                    SuppressAuthor -> "\\cites*"
                     AuthorInText   -> "\\textcites"
-                    NormalCitation -> "\\autocites"
+                    NormalCitation -> "\\cites"
     let convertOne Citation { citationId = k
                             , citationPrefix = p
                             , citationSuffix = s
