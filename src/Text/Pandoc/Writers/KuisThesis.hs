@@ -14,9 +14,8 @@
 
 Conversion of 'Pandoc' format into LaTeX.
 -}
-module Text.Pandoc.Writers.LaTeX (
-    writeLaTeX
-  , writeBeamer
+module Text.Pandoc.Writers.KuisThesis (
+    writeThesis
   ) where
 import Prelude
 import Control.Applicative ((<|>))
@@ -53,7 +52,7 @@ data WriterState =
               , stInQuote       :: Bool          -- true if in a blockquote
               , stExternalNotes :: Bool          -- true if in context where
                                                  -- we need to store footnotes
-              , stInMinipage    :: Bool          -- true if in minipage 
+              , stInMinipage    :: Bool          -- true if in minipage
               , stInHeading     :: Bool          -- true if in a section heading
               , stInItem        :: Bool          -- true if in \item[..]
               , stNotes         :: [Doc Text]    -- notes in a minipage
@@ -107,23 +106,60 @@ startingState options = WriterState {
                 , stCslHangingIndent = False }
 
 -- | Convert Pandoc to LaTeX.
-writeLaTeX :: PandocMonad m => WriterOptions -> Pandoc -> m Text
-writeLaTeX options document =
+writeThesis :: PandocMonad m => WriterOptions -> Pandoc -> m Text
+writeThesis options document =
   evalStateT (pandocToLaTeX options document) $
     startingState options
 
--- | Convert Pandoc to LaTeX Beamer.
-writeBeamer :: PandocMonad m => WriterOptions -> Pandoc -> m Text
-writeBeamer options document =
-  evalStateT (pandocToLaTeX options document) $
-    (startingState options){ stBeamer = True }
+allImages :: [Inline] -> Bool
+allImages (Image {} : t) = allImages t
+allImages (SoftBreak : t) = allImages t
+allImages (_ : _) = False
+allImages _ = True
+
+addAttr :: Attr -> Text -> Text -> Attr
+addAttr attr@(a, b, c) k v = case lookup k c of
+  Just _ -> attr
+  Nothing -> (a, b, (k, v) : c)
+
+toSubFigure :: PandocMonad m
+                  => Inline -> LW m (Doc Text)
+toSubFigure (Image attr@(ident, _, _) txt (src,tgt))
+--  | Just tit <- T.stripPrefix "fig:" tgt
+  = do
+      (capt, captForLof, footnotes) <- getCaption True txt
+      lab <- labelFor ident
+      wid <- getSizeValue attr FrameWidth
+      let caption = "\\caption" <> captForLof <> braces capt <> lab
+      img <- inlineToLaTeX (Image (addAttr attr "width" "100%") txt (src,tgt))
+      innards <- hypertarget True ident $ img $$ caption <> cr
+      let widText = if null wid then "\\textwidth" else wid
+      let figure = cr <> "\\begin{subfigure}{" $$ widText $$ "}" $$ innards $$ "\\end{subfigure}"
+      st <- get
+      return $ (if stInMinipage st
+                 -- can't have figures in notes or minipage (here, table cell)
+                 -- http://www.tex.ac.uk/FAQ-ouparmd.html
+                then cr <> "\\begin{center}" $$ img $+$ capt $$
+                       "\\end{center}"
+                else figure) $$ footnotes
+toSubFigure _ = error "IMG Only!!!"
 
 type LW m = StateT WriterState m
+
+writeAdditionalMetaBlock :: PandocMonad m
+                         => Text -> Meta -> LW m (Doc Text)
+writeAdditionalMetaBlock metaKey meta =
+  case lookupMeta metaKey meta of
+    Just (MetaBlocks blocks) -> blockListToLaTeX blocks
+    _ -> return empty
 
 pandocToLaTeX :: PandocMonad m
               => WriterOptions -> Pandoc -> LW m Text
 pandocToLaTeX options (Pandoc meta blocks) = do
   -- Strip off final 'references' header if --natbib or --biblatex
+  jabst <- writeAdditionalMetaBlock "jabstractFileBlocks" meta
+  eabst <- writeAdditionalMetaBlock "eabstractFileBlocks" meta
+  acknowledgment <- writeAdditionalMetaBlock "acknowledgmentFileBlocks" meta
   let method = writerCiteMethod options
   let blocks' = if method == Biblatex || method == Natbib
                    then case reverse blocks of
@@ -228,6 +264,15 @@ pandocToLaTeX options (Pandoc meta blocks) = do
                                       (T.stripEnd $ styleToLaTeX sty)
                                 Nothing -> id
                       else id) $
+                  (if isEmpty jabst
+                   then id
+                   else defField "jabst" jabst) $
+                  (if isEmpty eabst
+                   then id
+                   else defField "eabst" eabst) $
+                  (if isEmpty acknowledgment
+                   then id
+                   else defField "acknowledgment" acknowledgment) $
                   (case writerCiteMethod options of
                          Natbib   -> defField "biblio-title" biblioTitle .
                                      defField "natbib" True
@@ -446,6 +491,10 @@ toLabel z = go `fmap` stringToLaTeX URLString z
 inCmd :: Text -> Doc Text -> Doc Text
 inCmd cmd contents = char '\\' <> literal cmd <> braces contents
 
+isImage :: Inline -> Bool
+isImage Image {} = True
+isImage _ = False
+
 toSlides :: PandocMonad m => [Block] -> LW m [Block]
 toSlides bs = do
   opts <- gets stOptions
@@ -580,7 +629,12 @@ blockToLaTeX (Para [Str ".",Space,Str ".",Space,Str "."]) = do
      then blockToLaTeX (RawBlock "latex" "\\pause")
      else inlineListToLaTeX [Str ".",Space,Str ".",Space,Str "."]
 blockToLaTeX (Para lst) =
-  inlineListToLaTeX lst
+  if allImages lst
+    then do
+      let imgs = filter isImage lst
+      figs <- mapM toSubFigure imgs
+      return $ "\\begin{figure*}" $$ foldl (<>) empty figs $$ "\\end{figure*}"
+    else inlineListToLaTeX lst
 blockToLaTeX (LineBlock lns) =
   blockToLaTeX $ linesToPara lns
 blockToLaTeX (BlockQuote lst) = do
@@ -678,9 +732,7 @@ blockToLaTeX (BulletList lst) = do
   beamer <- gets stBeamer
   let inc = if beamer && incremental then "[<+->]" else ""
   items <- mapM listItemToLaTeX lst
-  let spacing = if isTightList lst
-                   then text "\\tightlist"
-                   else empty
+  let spacing = empty
   return $ text ("\\begin{itemize}" <> inc) $$ spacing $$ vcat items $$
              "\\end{itemize}"
 blockToLaTeX (OrderedList _ []) = return empty -- otherwise latex error
@@ -724,9 +776,7 @@ blockToLaTeX (OrderedList (start, numstyle, numdelim) lst) = do
                         then empty
                         else "\\setcounter" <> braces enum <>
                               braces (text $ show $ start - 1)
-  let spacing = if isTightList lst
-                   then text "\\tightlist"
-                   else empty
+  let spacing = empty
   return $ text ("\\begin{enumerate}" <> inc)
          $$ stylecommand
          $$ resetcounter
@@ -739,9 +789,7 @@ blockToLaTeX (DefinitionList lst) = do
   beamer <- gets stBeamer
   let inc = if beamer && incremental then "[<+->]" else ""
   items <- mapM defListItemToLaTeX lst
-  let spacing = if all isTightList (map snd lst)
-                   then text "\\tightlist"
-                   else empty
+  let spacing = empty
   return $ text ("\\begin{description}" <> inc) $$ spacing $$ vcat items $$
                "\\end{description}"
 blockToLaTeX HorizontalRule =
@@ -755,14 +803,14 @@ blockToLaTeX (Header level (id',classes,_) lst) = do
 blockToLaTeX (Table caption aligns widths heads rows) = do
   (captionText, captForLof, captNotes) <- getCaption False caption
   let toHeaders hs = do contents <- tableRowToLaTeX True aligns widths hs
-                        return ("\\toprule" $$ contents $$ "\\midrule")
+                        return ("\\hline" $$ contents $$ "\\hline")
   let removeNote (Note _) = Span ("", [], []) []
       removeNote x        = x
   firsthead <- if isEmpty captionText || all null heads
                   then return empty
-                  else ($$ text "\\endfirsthead") <$> toHeaders heads
+                  else ($$ text "") <$> toHeaders heads
   head' <- if all null heads
-              then return "\\toprule"
+              then return "\\hline"
               -- avoid duplicate notes in head and firsthead:
               else toHeaders (if isEmpty firsthead
                                  then heads
@@ -770,21 +818,18 @@ blockToLaTeX (Table caption aligns widths heads rows) = do
   let capt = if isEmpty captionText
                 then empty
                 else "\\caption" <> captForLof <> braces captionText
-                         <> "\\tabularnewline"
   rows' <- mapM (tableRowToLaTeX False aligns widths) rows
   let colDescriptors = literal $ T.concat $ map toColDescriptor aligns
   modify $ \s -> s{ stTable = True }
   notes <- notesToLaTeX <$> gets stNotes
-  return $ "\\begin{longtable}[]" <>
-              braces ("@{}" <> colDescriptors <> "@{}")
-              -- the @{} removes extra space at beginning and end
+  return $ "\\begin{table}[]"
          $$ capt
-         $$ firsthead
+         $$ "\\centering"
+         $$ "\\begin{tabular}" <>
+              braces colDescriptors
          $$ head'
-         $$ "\\endhead"
          $$ vcat rows'
-         $$ "\\bottomrule"
-         $$ "\\end{longtable}"
+         $$ "\\end{tabular}\\end{table}"
          $$ captNotes
          $$ notes
 
@@ -839,7 +884,7 @@ tableRowToLaTeX header aligns widths cols = do
                           (scaleFactor / fromIntegral (length aligns))
                    else map (scaleFactor *) widths
   cells <- mapM (tableCellToLaTeX header) $ zip3 widths' aligns cols
-  return $ hsep (intersperse "&" cells) <> "\\tabularnewline"
+  return $ hsep (intersperse "&" cells) <> "\\tabularnewline\\hline"
 
 -- For simple latex tables (without minipages or parboxes),
 -- we need to go to some lengths to get line breaks working:
@@ -1107,6 +1152,35 @@ isQuoted :: Inline -> Bool
 isQuoted (Quoted _ _) = True
 isQuoted _            = False
 
+getSizeValue :: PandocMonad m => Attr -> Direction -> LW m (Doc Text)
+getSizeValue attr dir = do
+  opts <- gets stOptions
+  return (case dimension dir attr of
+    Just (Pixel a)   ->
+      literal (showInInch opts (Pixel a)) <> "in"
+    Just (Percent a) ->
+      literal (showFl (a / 100)) <>
+        case dir of
+          Width  -> "\\textwidth"
+          Height -> "\\textheight"
+          FrameWidth -> "\\textwidth"
+    Just dim         -> text (show dim)
+    Nothing          -> empty)
+
+getSizeTextPair :: PandocMonad m => Attr -> Direction -> LW m [Doc Text]
+getSizeTextPair attr dir = do
+  value <- getSizeValue attr dir
+  return (let d = text (show dir) <> "="
+                      in case dimension dir attr of
+                        Just _ -> [d <> value]
+                        Nothing          -> [])
+
+getSizeText :: PandocMonad m => Attr -> LW m [Doc Text]
+getSizeText attr = do
+  w <- getSizeTextPair attr Width
+  h <- getSizeTextPair attr Height
+  return $ w <> h
+
 -- | Convert inline element to LaTeX
 inlineToLaTeX :: PandocMonad m
               => Inline    -- ^ Inline to convert
@@ -1284,33 +1358,13 @@ inlineToLaTeX il@(Image _ _ (src, _))
 inlineToLaTeX (Image attr _ (source, _)) = do
   setEmptyLine False
   modify $ \s -> s{ stGraphics = True }
-  opts <- gets stOptions
-  let showDim dir = let d = text (show dir) <> "="
-                    in case dimension dir attr of
-                         Just (Pixel a)   ->
-                           [d <> literal (showInInch opts (Pixel a)) <> "in"]
-                         Just (Percent a) ->
-                           [d <> literal (showFl (a / 100)) <>
-                             case dir of
-                                Width  -> "\\textwidth"
-                                Height -> "\\textheight"
-                           ]
-                         Just dim         ->
-                           [d <> text (show dim)]
-                         Nothing          ->
-                           case dir of
-                                Width | isJust (dimension Height attr) ->
-                                  [d <> "\\textwidth"]
-                                Height | isJust (dimension Width attr) ->
-                                  [d <> "\\textheight"]
-                                _ -> []
-      dimList = showDim Width <> showDim Height
-      dims = if null dimList
-                then empty
-                else brackets $ mconcat (intersperse "," dimList)
-      source' = if isURI source
-                   then source
-                   else T.pack $ unEscapeString $ T.unpack source
+  dimList <- getSizeText attr
+  let dims = if null dimList
+            then empty
+            else brackets $ mconcat (intersperse "," dimList)
+  let source' = if isURI source
+                then source
+                else T.pack $ unEscapeString $ T.unpack source
   source'' <- stringToLaTeX URLString source'
   inHeading <- gets stInHeading
   return $
@@ -1449,24 +1503,24 @@ citationsToBiblatex
                 , citationMode = m
                 } = one
        cmd = case m of
-                  SuppressAuthor -> "autocite*"
+                  SuppressAuthor -> "cite*"
                   AuthorInText   -> "textcite"
-                  NormalCitation -> "autocite"
+                  NormalCitation -> "cite"
 
 citationsToBiblatex (c:cs)
   | all (\cit -> null (citationPrefix cit) && null (citationSuffix cit)) (c:cs)
     = do
       let cmd = case citationMode c of
-                    SuppressAuthor -> "\\autocite*"
+                    SuppressAuthor -> "\\cite*"
                     AuthorInText   -> "\\textcite"
-                    NormalCitation -> "\\autocite"
+                    NormalCitation -> "\\cite"
       return $ text cmd <>
                braces (literal (T.intercalate "," (map citationId (c:cs))))
   | otherwise = do
     let cmd = case citationMode c of
-                    SuppressAuthor -> "\\autocites*"
+                    SuppressAuthor -> "\\cites*"
                     AuthorInText   -> "\\textcites"
-                    NormalCitation -> "\\autocites"
+                    NormalCitation -> "\\cites"
     let convertOne Citation { citationId = k
                             , citationPrefix = p
                             , citationSuffix = s

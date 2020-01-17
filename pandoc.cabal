@@ -52,6 +52,7 @@ data-files:
                  data/templates/default.icml
                  data/templates/default.opml
                  data/templates/default.latex
+                 data/templates/default.kuisthesis
                  data/templates/default.context
                  data/templates/default.texinfo
                  data/templates/default.jira
@@ -513,6 +514,7 @@ library
                    Text.Pandoc.Writers.ICML,
                    Text.Pandoc.Writers.Jira,
                    Text.Pandoc.Writers.LaTeX,
+                   Text.Pandoc.Writers.KuisThesis,
                    Text.Pandoc.Writers.ConTeXt,
                    Text.Pandoc.Writers.OpenDocument,
                    Text.Pandoc.Writers.Texinfo,
