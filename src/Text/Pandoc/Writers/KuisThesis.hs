@@ -522,6 +522,10 @@ blockToLaTeX :: PandocMonad m
              => Block     -- ^ Block to convert
              -> LW m (Doc Text)
 blockToLaTeX Null = return empty
+blockToLaTeX (Div attr@(_, ["JAbst"], _) bs) = do
+  contents <- blockListToLaTeX bs
+  return $ "\\begin{jabstract}" $$
+                 contents $$ "\\end{jabstract}"
 blockToLaTeX (Div attr@(identifier,"block":_,_) (Header _ _ ils : bs)) = do
   ref <- toLabel identifier
   let anchor = if T.null identifier
