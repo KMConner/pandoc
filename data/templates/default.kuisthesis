@@ -36,25 +36,8 @@ $endif$
 
 \maketitle
 
-$if(jabst)$
-\begin{jabstract}
-$jabst$
-\end{jabstract}
-$endif$
-
-$if(eabst)$
-\begin{eabstract}
-$eabst$
-\end{eabstract}
-$endif$
-
 \tableofcontents
 $body$
-
-$if(acknowledgment)$
-\acknowledgments
-$acknowledgment$
-$endif$
 
 $if(biblatex)$
 $if(biblio-style)$

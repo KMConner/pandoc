@@ -146,20 +146,10 @@ toSubFigure _ = error "IMG Only!!!"
 
 type LW m = StateT WriterState m
 
-writeAdditionalMetaBlock :: PandocMonad m
-                         => Text -> Meta -> LW m (Doc Text)
-writeAdditionalMetaBlock metaKey meta =
-  case lookupMeta metaKey meta of
-    Just (MetaBlocks blocks) -> blockListToLaTeX blocks
-    _ -> return empty
-
 pandocToLaTeX :: PandocMonad m
               => WriterOptions -> Pandoc -> LW m Text
 pandocToLaTeX options (Pandoc meta blocks) = do
   -- Strip off final 'references' header if --natbib or --biblatex
-  jabst <- writeAdditionalMetaBlock "jabstractFileBlocks" meta
-  eabst <- writeAdditionalMetaBlock "eabstractFileBlocks" meta
-  acknowledgment <- writeAdditionalMetaBlock "acknowledgmentFileBlocks" meta
   let method = writerCiteMethod options
   let blocks' = if method == Biblatex || method == Natbib
                    then case reverse blocks of
@@ -264,15 +254,6 @@ pandocToLaTeX options (Pandoc meta blocks) = do
                                       (T.stripEnd $ styleToLaTeX sty)
                                 Nothing -> id
                       else id) $
-                  (if isEmpty jabst
-                   then id
-                   else defField "jabst" jabst) $
-                  (if isEmpty eabst
-                   then id
-                   else defField "eabst" eabst) $
-                  (if isEmpty acknowledgment
-                   then id
-                   else defField "acknowledgment" acknowledgment) $
                   (case writerCiteMethod options of
                          Natbib   -> defField "biblio-title" biblioTitle .
                                      defField "natbib" True
@@ -522,10 +503,17 @@ blockToLaTeX :: PandocMonad m
              => Block     -- ^ Block to convert
              -> LW m (Doc Text)
 blockToLaTeX Null = return empty
-blockToLaTeX (Div attr@(_, ["JAbst"], _) bs) = do
+blockToLaTeX (Div (_, ["JAbst"], _) bs) = do
   contents <- blockListToLaTeX bs
   return $ "\\begin{jabstract}" $$
                  contents $$ "\\end{jabstract}"
+blockToLaTeX (Div (_, ["EAbst"], _) bs) = do
+  contents <- blockListToLaTeX bs
+  return $ "\\begin{eabstract}" $$
+                 contents $$ "\\end{eabstract}"
+blockToLaTeX (Div (_, ["Acknowledgment"], _) bs) = do
+  contents <- blockListToLaTeX bs
+  return $ "\\acknowledgments" $$ contents
 blockToLaTeX (Div attr@(identifier,"block":_,_) (Header _ _ ils : bs)) = do
   ref <- toLabel identifier
   let anchor = if T.null identifier
