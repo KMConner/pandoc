@@ -3,7 +3,6 @@
 \usepackage[dvipdfmx,hidelinks]{hyperref}
 \usepackage{pxjahyper}
 \usepackage[dvipdfmx]{graphicx}
-\usepackage[labelformat=empty]{caption}
 
 $if(jtitle)$
 \jtitle{$jtitle$}

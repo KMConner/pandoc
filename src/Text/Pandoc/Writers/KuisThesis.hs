@@ -498,6 +498,19 @@ isListBlock (OrderedList _ _)  = True
 isListBlock (DefinitionList _) = True
 isListBlock _                  = False
 
+trySplitStr :: [Inline] -> Maybe ([Inline], Text)
+trySplitStr [] = Nothing
+trySplitStr (h:[Str t]) = Just ([h], t)
+trySplitStr (h:t) = case trySplitStr t of
+  Just (ils, txt) -> Just (h:ils, txt)
+  Nothing -> Nothing
+
+getTableCaption :: [Inline] -> ([Inline], Maybe Text)
+getTableCaption [] = ([], Nothing)
+getTableCaption ils = case trySplitStr ils of
+  Just (inlines, txt) | T.isPrefixOf "{#tbl:" txt && T.isSuffixOf "}" txt -> (inlines, Just (T.dropEnd 1 (T.drop 6 txt)))
+  _  -> (ils, Nothing)
+
 -- | Convert Pandoc block element to LaTeX.
 blockToLaTeX :: PandocMonad m
              => Block     -- ^ Block to convert
@@ -793,7 +806,8 @@ blockToLaTeX (Header level (id',classes,_) lst) = do
   modify $ \s -> s{stInHeading = False}
   return hdr
 blockToLaTeX (Table caption aligns widths heads rows) = do
-  (captionText, captForLof, captNotes) <- getCaption False caption
+  let (caption', labelText) = getTableCaption caption
+  (captionText, captForLof, captNotes) <- getCaption False caption'
   let toHeaders hs = do contents <- tableRowToLaTeX True aligns widths hs
                         return ("\\hline" $$ contents $$ "\\hline")
   let removeNote (Note _) = Span ("", [], []) []
@@ -811,6 +825,9 @@ blockToLaTeX (Table caption aligns widths heads rows) = do
                 then empty
                 else "\\caption" <> captForLof <> braces captionText
   rows' <- mapM (tableRowToLaTeX False aligns widths) rows
+  let captLink = case labelText of
+        Just txt -> "\\label" <> braces (literal ("tbl:" <> txt))
+        Nothing -> empty
   let colDescriptors = literal $ T.concat $ map toColDescriptor aligns
   modify $ \s -> s{ stTable = True }
   notes <- notesToLaTeX <$> gets stNotes
@@ -821,7 +838,9 @@ blockToLaTeX (Table caption aligns widths heads rows) = do
               braces colDescriptors
          $$ head'
          $$ vcat rows'
-         $$ "\\end{tabular}\\end{table}"
+         $$ "\\end{tabular}"
+         $$ captLink
+         $$ "\\end{table}"
          $$ captNotes
          $$ notes
 
@@ -1173,6 +1192,45 @@ getSizeText attr = do
   h <- getSizeTextPair attr Height
   return $ w <> h
 
+data InternalLinkType = FigureLink | SectionLink | TableLink | ListLink | EquationLink
+
+getInternalLinkType :: Text -> Maybe InternalLinkType
+getInternalLinkType linkId | T.isPrefixOf "fig:" linkId = Just FigureLink
+                           | T.isPrefixOf "sec:" linkId = Just SectionLink
+                           | T.isPrefixOf "tbl:" linkId = Just TableLink
+                           | T.isPrefixOf "lst:" linkId = Just ListLink
+                           | T.isPrefixOf "eq:" linkId = Just EquationLink
+getInternalLinkType _ = Nothing
+
+isAllInternal :: [Citation] -> Bool
+isAllInternal [] = True
+isAllInternal (h:t) = isJust (getInternalLinkType k) && isAllInternal t
+  where
+       Citation { citationId = k } = h
+
+getLinkPrefix :: Text -> Text
+getLinkPrefix linkId =
+  case getInternalLinkType linkId of
+    Just t -> case t of
+      FigureLink -> "図"
+      SectionLink -> "節"
+      TableLink -> "表"
+      ListLink -> "コード"
+      EquationLink -> "式"
+    Nothing -> ""
+
+handleInternalLinks :: PandocMonad m
+              => [Citation] -> LW m (Doc Text)
+handleInternalLinks [] = return empty
+handleInternalLinks (h:t) = do
+  tails <- handleInternalLinks t
+  let prefix = getLinkPrefix k
+  return $ case m of
+    SuppressAuthor -> "\\ref" <> braces (literal k) <> tails
+    _              -> literal prefix <> "\\ref" <> braces (literal k) <> tails
+  where
+       Citation { citationId = k
+                , citationMode = m } = h
 -- | Convert inline element to LaTeX
 inlineToLaTeX :: PandocMonad m
               => Inline    -- ^ Inline to convert
@@ -1213,11 +1271,11 @@ inlineToLaTeX (Subscript lst) =
   inCmd "textsubscript" <$> inlineListToLaTeX lst
 inlineToLaTeX (SmallCaps lst) =
   inCmd "textsc"<$> inlineListToLaTeX lst
+inlineToLaTeX (Cite cits _) | isAllInternal cits = do handleInternalLinks cits
 inlineToLaTeX (Cite cits lst) = do
   st <- get
   let opts = stOptions st
   case writerCiteMethod opts of
-     Natbib   -> citationsToNatbib cits
      Biblatex -> citationsToBiblatex cits
      _        -> inlineListToLaTeX lst
 
@@ -1402,56 +1460,6 @@ protectCode x = [x]
 
 setEmptyLine :: PandocMonad m => Bool -> LW m ()
 setEmptyLine b = modify $ \st -> st{ stEmptyLine = b }
-
-citationsToNatbib :: PandocMonad m => [Citation] -> LW m (Doc Text)
-citationsToNatbib
-            [one]
-  = citeCommand c p s k
-  where
-    Citation { citationId = k
-             , citationPrefix = p
-             , citationSuffix = s
-             , citationMode = m
-             }
-      = one
-    c = case m of
-             AuthorInText   -> "citet"
-             SuppressAuthor -> "citeyearpar"
-             NormalCitation -> "citep"
-
-citationsToNatbib cits
-  | noPrefix (tail cits) && noSuffix (init cits) && ismode NormalCitation cits
-  = citeCommand "citep" p s ks
-  where
-     noPrefix  = all (null . citationPrefix)
-     noSuffix  = all (null . citationSuffix)
-     ismode m  = all ((==) m  . citationMode)
-     p         = citationPrefix  $
-                 head cits
-     s         = citationSuffix  $
-                 last cits
-     ks        = T.intercalate ", " $ map citationId cits
-
-citationsToNatbib (c:cs) | citationMode c == AuthorInText = do
-     author <- citeCommand "citeauthor" [] [] (citationId c)
-     cits   <- citationsToNatbib (c { citationMode = SuppressAuthor } : cs)
-     return $ author <+> cits
-
-citationsToNatbib cits = do
-  cits' <- mapM convertOne cits
-  return $ text "\\citetext{" <> foldl' combineTwo empty cits' <> text "}"
-  where
-    combineTwo a b | isEmpty a = b
-                   | otherwise = a <> text "; " <> b
-    convertOne Citation { citationId = k
-                        , citationPrefix = p
-                        , citationSuffix = s
-                        , citationMode = m
-                        }
-        = case m of
-               AuthorInText   -> citeCommand "citealt"  p s k
-               SuppressAuthor -> citeCommand "citeyear" p s k
-               NormalCitation -> citeCommand "citealp"  p s k
 
 citeCommand :: PandocMonad m
             => Text -> [Inline] -> [Inline] -> Text -> LW m (Doc Text)
