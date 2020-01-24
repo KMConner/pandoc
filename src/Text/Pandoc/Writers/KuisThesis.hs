@@ -73,6 +73,8 @@ data WriterState =
               , stEmptyLine     :: Bool          -- true if no content on line
               , stHasCslRefs    :: Bool          -- has a Div with class refs
               , stCslHangingIndent :: Bool       -- use hanging indent for bib
+              , japaneseAbstract :: Maybe (Doc Text)
+              , englishAbstract :: Maybe (Doc Text)
               }
 
 startingState :: WriterOptions -> WriterState
@@ -103,7 +105,9 @@ startingState options = WriterState {
                 , stBeamer = False
                 , stEmptyLine = True
                 , stHasCslRefs = False
-                , stCslHangingIndent = False }
+                , stCslHangingIndent = False
+                , japaneseAbstract = Nothing
+                , englishAbstract = Nothing }
 
 -- | Convert Pandoc to LaTeX.
 writeThesis :: PandocMonad m => WriterOptions -> Pandoc -> m Text
@@ -247,6 +251,8 @@ pandocToLaTeX options (Pandoc meta blocks) = do
                   defField "has-frontmatter" (documentClass `elem` frontmatterClasses) $
                   defField "listings" (writerListings options || stLHS st) $
                   defField "beamer" beamer $
+                  defField "jabst" (fromMaybe empty (japaneseAbstract st)) $
+                  defField "eabst" (fromMaybe empty (englishAbstract st)) $
                   (if stHighlighting st
                       then case writerHighlightStyle options of
                                 Just sty ->
@@ -518,12 +524,12 @@ blockToLaTeX :: PandocMonad m
 blockToLaTeX Null = return empty
 blockToLaTeX (Div (_, ["JAbst"], _) bs) = do
   contents <- blockListToLaTeX bs
-  return $ "\\begin{jabstract}" $$
-                 contents $$ "\\end{jabstract}"
+  modify $ \s -> s{ japaneseAbstract = Just contents }
+  return empty
 blockToLaTeX (Div (_, ["EAbst"], _) bs) = do
   contents <- blockListToLaTeX bs
-  return $ "\\begin{eabstract}" $$
-                 contents $$ "\\end{eabstract}"
+  modify $ \s -> s{ englishAbstract = Just contents }
+  return empty
 blockToLaTeX (Div (_, ["Acknowledgment"], _) bs) = do
   contents <- blockListToLaTeX bs
   return $ "\\acknowledgments" $$ contents
