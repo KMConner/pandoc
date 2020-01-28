@@ -1326,7 +1326,8 @@ inlineToLaTeX (Code (_,classes,kvs) str) = do
                Right h -> modify (\st -> st{ stHighlighting = True }) >>
                           return (text (T.unpack h))
   case () of
-     _ | inHeading || inItem  -> rawCode  -- see #5574
+     _ | "latex" `elem` classes -> return $ literal str
+       | inHeading || inItem  -> rawCode  -- see #5574
        | writerListings opts  -> listingsCode
        | isJust (writerHighlightStyle opts) && not (null classes)
                               -> highlightCode
