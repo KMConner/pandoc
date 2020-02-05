@@ -138,7 +138,7 @@ toSubFigure (Image attr@(ident, _, _) txt (src,tgt))
       img <- inlineToLaTeX (Image (addAttr attr "width" "100%") txt (src,tgt))
       innards <- hypertarget True ident $ img $$ caption <> cr
       let widText = if null wid then "\\textwidth" else wid
-      let figure = cr <> "\\begin{subfigure}{" $$ widText $$ "}" $$ innards $$ "\\end{subfigure}"
+      let figure = cr <> "\\begin{subfigure}{" $$ widText $$ "}" $$ "\\centering"$$ innards $$ "\\end{subfigure}"
       st <- get
       return $ (if stInMinipage st
                  -- can't have figures in notes or minipage (here, table cell)
